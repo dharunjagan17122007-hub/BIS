@@ -32,3 +32,17 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+# Local database
+backend/bis_navigator.db
+
+# Nested/local BIS folder
+BIS/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+dist/
