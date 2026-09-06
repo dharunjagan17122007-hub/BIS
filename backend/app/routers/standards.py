@@ -116,16 +116,17 @@ def get_standard(
 
     if standard:
         return {
-            "found": True,
-            "standard": {
-                "id": standard.id,
-                "is_number": standard.is_number,
-                "title": standard.title,
-                "category": standard.category,
-                "description": standard.description,
-                "status": standard.status
-            }
-        }
+    "found": True,
+    "standard": {
+        "id": standard.id,
+        "is_number": standard.is_number,
+        "title": standard.title,
+        "category": standard.category,
+        "description": standard.description,
+        "status": standard.status,
+        "source_url": standard.source_url
+    }
+}
 
     return {
         "found": False,

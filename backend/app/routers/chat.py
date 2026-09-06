@@ -5,6 +5,8 @@ import re
 from app.database import get_db
 from app.models import Standard
 from app.services.recommendation_service import recommend_standards
+from app.routers.products import PRODUCTS
+from app.routers.services import SERVICES
 
 
 router = APIRouter(
@@ -99,15 +101,6 @@ def standard_to_dict(standard: Standard):
 # =========================================================
 
 def detect_category(query: str):
-    """
-    Detect category only when the user explicitly
-    asks for a category of standards.
-
-    This prevents queries such as:
-    'I manufacture steel reinforcement bars'
-
-    from being treated as a general category search.
-    """
 
     text = query.lower().strip()
 
@@ -188,6 +181,216 @@ def detect_category(query: str):
 
 
 # =========================================================
+# PRODUCT REQUIREMENT DETECTION
+# =========================================================
+
+def detect_product_intent(query: str):
+    """
+    Detect whether the user is asking about
+    product requirements.
+    """
+
+    text = query.lower().strip()
+
+    requirement_words = [
+        "requirement",
+        "requirements",
+        "require",
+        "specification",
+        "specifications",
+        "what do i need",
+        "what is needed",
+        "applicable standard",
+        "which standard",
+        "standard for",
+        "used for"
+    ]
+
+    has_requirement_intent = any(
+        word in text
+        for word in requirement_words
+    )
+
+    best_product = None
+    best_score = 0
+
+    for product in PRODUCTS:
+
+        score = 0
+
+        product_name = product["product"].lower()
+
+        # Direct product name match
+        if product_name in text:
+            score += 20
+
+        # Match individual words
+        product_words = re.findall(
+            r"[a-zA-Z0-9]+",
+            product_name
+        )
+
+        for word in product_words:
+
+            if len(word) > 2 and word in text:
+                score += 5
+
+        # Match requirements
+        for requirement in product["requirements"]:
+
+            requirement_words = re.findall(
+                r"[a-zA-Z0-9]+",
+                requirement.lower()
+            )
+
+            for word in requirement_words:
+
+                if len(word) > 3 and word in text:
+                    score += 2
+
+        # Match category
+        if product["category"].lower() in text:
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best_product = product
+
+    if best_product and (
+        has_requirement_intent or best_score >= 10
+    ):
+        return best_product
+
+    return None
+
+
+# =========================================================
+# SERVICE INTENT DETECTION
+# =========================================================
+
+def detect_service_intent(query: str):
+    """
+    Detect BIS services such as:
+    certification, ISI mark and licence.
+    """
+
+    text = query.lower().strip()
+
+    best_service = None
+    best_score = 0
+
+    for service in SERVICES:
+
+        score = 0
+
+        name = service["name"].lower()
+        description = service["description"].lower()
+
+        # Service name match
+        if name in text:
+            score += 20
+
+        # Description words
+        description_words = re.findall(
+            r"[a-zA-Z0-9]+",
+            description
+        )
+
+        for word in description_words:
+
+            if len(word) > 3 and word in text:
+                score += 2
+
+        # Keyword match
+        for keyword in service["keywords"]:
+
+            if keyword.lower() in text:
+                score += 10
+
+        if score > best_score:
+            best_score = score
+            best_service = service
+
+    if best_service and best_score >= 8:
+        return best_service
+
+    return None
+
+
+# =========================================================
+# CREATE PRODUCT RESPONSE
+# =========================================================
+
+def create_product_response(
+    db: Session,
+    product: dict
+):
+
+    standard = find_standard_by_is_number(
+        db,
+        product["standard"]
+    )
+
+    source_url = None
+
+    if standard:
+        source_url = standard.source_url
+
+    answer = (
+        f"Product Requirements\n\n"
+        f"{product['product']}\n\n"
+        f"Applicable BIS Standard:\n"
+        f"{product['standard']}\n\n"
+        f"Requirements:\n"
+    )
+
+    for requirement in product["requirements"]:
+        answer += f"• {requirement}\n"
+
+    answer += (
+        f"\nCategory:\n"
+        f"{product['category']}"
+    )
+
+    return {
+        "answer": answer,
+        "product": {
+            "id": product["id"],
+            "product": product["product"],
+            "category": product["category"],
+            "standard": product["standard"],
+            "requirements": product["requirements"],
+            "source_url": source_url
+        }
+    }
+
+
+# =========================================================
+# CREATE SERVICE RESPONSE
+# =========================================================
+
+def create_service_response(service: dict):
+
+    answer = (
+        f"BIS Service\n\n"
+        f"{service['name']}\n\n"
+        f"{service['description']}\n\n"
+        f"Category:\n"
+        f"{service['category']}"
+    )
+
+    return {
+        "answer": answer,
+        "service": {
+            "id": service["id"],
+            "name": service["name"],
+            "description": service["description"],
+            "category": service["category"]
+        }
+    }
+
+
+# =========================================================
 # CREATE ASSISTANT-STYLE RECOMMENDATION ANSWER
 # =========================================================
 
@@ -195,10 +398,6 @@ def create_recommendation_answer(
     best_match: dict,
     related_standards: list
 ):
-    """
-    Create a human-readable response
-    for the recommended BIS standard.
-    """
 
     is_number = best_match["is_number"]
     title = best_match["title"]
@@ -247,6 +446,7 @@ def chat(
 
     query = query.strip()
 
+
     # =====================================================
     # 1. DIRECT IS NUMBER LOOKUP
     # =====================================================
@@ -277,7 +477,50 @@ def chat(
 
 
     # =====================================================
-    # 2. EXPLICIT CATEGORY SEARCH
+    # 2. PRODUCT REQUIREMENTS
+    # =====================================================
+
+    product = detect_product_intent(query)
+
+    if product:
+
+        product_response = create_product_response(
+            db,
+            product
+        )
+
+        return {
+            "query": query,
+            "found": True,
+            "response_type": "product_requirements",
+            "answer": product_response["answer"],
+            "product": product_response["product"]
+        }
+
+
+    # =====================================================
+    # 3. BIS SERVICE
+    # =====================================================
+
+    service = detect_service_intent(query)
+
+    if service:
+
+        service_response = create_service_response(
+            service
+        )
+
+        return {
+            "query": query,
+            "found": True,
+            "response_type": "service_information",
+            "answer": service_response["answer"],
+            "service": service_response["service"]
+        }
+
+
+    # =====================================================
+    # 4. EXPLICIT CATEGORY SEARCH
     # =====================================================
 
     category = detect_category(query)
@@ -310,7 +553,7 @@ def chat(
 
 
     # =====================================================
-    # 3. NATURAL-LANGUAGE RECOMMENDATION
+    # 5. NATURAL-LANGUAGE RECOMMENDATION
     # =====================================================
 
     all_standards = db.query(Standard).all()
@@ -323,27 +566,19 @@ def chat(
 
     if recommendations:
 
-        # First result = best recommendation
         best_match = recommendations[0]
 
-        # Remaining results = related standards
         related_standards = recommendations[1:]
 
-        # Create readable assistant response
         answer = create_recommendation_answer(
             best_match,
             related_standards
         )
 
-        # =================================================
-        # CLEAN JSON RESPONSE
-        # =================================================
-
         return {
             "query": query,
             "found": True,
             "response_type": "recommendation",
-
             "answer": answer,
 
             "best_match": {
@@ -351,7 +586,8 @@ def chat(
                 "title": best_match["title"],
                 "category": best_match["category"],
                 "status": best_match["status"],
-                "reason": best_match["reason"]
+                "reason": best_match["reason"],
+                "source_url": best_match.get("source_url")
             },
 
             "related_standards": [
@@ -365,7 +601,7 @@ def chat(
 
 
     # =====================================================
-    # 4. NO MATCH
+    # 6. NO MATCH
     # =====================================================
 
     return {
@@ -375,6 +611,7 @@ def chat(
         "answer": (
             "I could not identify a matching BIS standard "
             "for your requirement. Try describing the "
-            "product, material, or application in more detail."
+            "product, material, service, or application "
+            "in more detail."
         )
     }

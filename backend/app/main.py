@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import standards, chat
+
+from app.routers import standards, chat, products, services
 
 app = FastAPI(
     title="BIS Navigator API",
@@ -18,6 +19,8 @@ app.add_middleware(
 
 app.include_router(standards.router)
 app.include_router(chat.router)
+app.include_router(products.router)
+app.include_router(services.router)
 
 
 @app.get("/")
